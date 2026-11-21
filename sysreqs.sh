@@ -14,7 +14,7 @@ echo "Updating package lists..."
 apt-get update
 
 echo "Installing git, sudo, wget, and curl..."
-apt-get install -y git sudo wget curl
+apt-get install -y git sudo wget curl mc ed tree 
 
 echo "Configuring 'ian' as a sudoer..."
 if id "ian" >/dev/null 2>&1; then
