@@ -1,6 +1,6 @@
 # Build Hyperion (`build-hyperion`)
 
-This repository contains automation scripts and configuration helpers to prepare a clean Debian Linux system (`ibm`) and build **SDL Hercules Hyperion** (IBM mainframe emulator) from source.
+This repository contains automation scripts and configuration helpers to prepare a clean Debian Linux system (`ibm`) and build **SDL Hercules Hyperion** (IBM mainframe emulator) from source on Intel architectures.
 
 ## Repository Structure
 
@@ -9,6 +9,7 @@ This repository contains automation scripts and configuration helpers to prepare
 ├── README.md        # Project documentation and build workflow
 ├── sysreqs          # Root bootstrap script for base tools and sudo access
 ├── buildreqs.sh     # User script to pull submodule source, install build packages & Regina REXX, and verify tool levels
+├── makehyperion.sh  # Interactive build script to configure, compile across all CPU cores, and install Hercules
 └── hyperion/        # Git submodule containing the upstream SDL-Hercules-390/hyperion source
 ```
 
@@ -32,6 +33,14 @@ This repository contains automation scripts and configuration helpers to prepare
   * Lists any `RELEASE*` or `README*` files in the submodule for review.
   * Installs required Debian build packages (`build-essential`, `cmake`, `flex`, `gawk`, `m4`, `autoconf`, `automake`, `libtool-bin`, `libltdl-dev`, `libbz2-dev`, `zlib1g-dev`, `libcap2-bin`) and `libregina3-dev` for Regina REXX support.
   * Runs Hercules's `./util/bldlvlck` script to verify that all required compiler and tool versions meet minimum requirements.
+
+### 3. `makehyperion.sh`
+* **Purpose:** Configures, compiles, and installs SDL Hercules Hyperion from the `hyperion/` submodule, pausing between each stage for manual inspection.
+* **What it does:**
+  * Verifies the script is run as `ian` (not `root`) and checks that `./configure` exists in `hyperion/`.
+  * **Configure:** Runs `./configure` to prepare the build for the host Intel system, then pauses for review.
+  * **Compile:** Detects all available CPU cores via `nproc` and builds Hercules in parallel (`make -j$(nproc)`), then pauses so you can inspect the build output for errors.
+  * **Install:** Runs `sudo make install` to install Hercules system-wide and automatically apply required thread priority and network capabilities (`setcap`), followed by a final confirmation pause.
 
 ## Usage Process
 
@@ -64,7 +73,18 @@ This repository contains automation scripts and configuration helpers to prepare
    ./buildreqs.sh
    ```
 
-*(Future build phases and scripts will be documented here as they are added to the repository.)*
+### Phase 3: Configure, Compile & Install (`makehyperion.sh`)
+
+1. Ensure `makehyperion.sh` is executable and run it as `ian`:
+   ```sh
+   chmod +x makehyperion.sh
+   ./makehyperion.sh
+   ```
+2. At each pause prompt (`./configure`, `make`, and `sudo make install`), scroll back through the terminal output to verify there are no warnings or errors, then press **Enter** to proceed to the next step (or **Ctrl+C** to abort).
+3. Verify the installed binaries and version details:
+   ```sh
+   hercules --help=version
+   ```
 
 ## References
 * [SDL Hercules 390 Installation & Operation Guide](https://github.io)
