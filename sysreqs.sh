@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -v
 set -e
 
 # Ensure sbin directories are in PATH when using plain 'su' on Debian
@@ -24,5 +24,8 @@ else
     echo "Error: User 'ian' does not exist." >&2
     exit 1
 fi
+
+git config --global user.name "Ian Stanley"
+git config --global user.email "iandstanley@gmail.com"
 
 echo "Base setup complete. Note: 'ian' will need to log out and back in for sudo group membership to take effect."

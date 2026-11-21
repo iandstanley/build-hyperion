@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -v
 set -e
 
 # Ensure the script is NOT run as root (should be run as 'ian' using sudo)
