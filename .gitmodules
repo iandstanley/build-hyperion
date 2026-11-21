@@ -1,0 +1,3 @@
+[submodule "hyperion"]
+	path = hyperion
+	url = https://github.com/SDL-Hercules-390/hyperion.git
