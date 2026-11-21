@@ -39,5 +39,9 @@ sudo make install
 pause_step "Step 8 (sudo make install) complete."
 
 echo "=== Build and installation complete! ==="
+
+# reload shared library cache
+sudo ldconfig
+
 echo "You can verify the installation by running: hercules --help=version"
 
