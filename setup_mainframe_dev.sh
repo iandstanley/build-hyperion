@@ -4,9 +4,10 @@
 # Description:   Installs Debian-native equivalents of classic IBM mainframe
 #                compilers, 3270 terminal emulators, XEDIT/ISPF clones, and
 #                workflow utilities for MVS 3.8J & VM/370CE development,
-#                installs check80/pad80/submitjcl into /usr/local/bin, and
-#                configures shell aliases, EBCDIC helpers, .therc, and .vimrc
-#                for 'ibm' & 'ian'.
+#                builds GNU MARST, THE (The Hessling Editor), and lspf from
+#                source, installs check80/pad80/submitjcl into /usr/local/bin,
+#                and configures shell aliases, EBCDIC helpers, .therc, and
+#                .vimrc for 'ibm' & 'ian'.
 # ==============================================================================
 
 set -euo pipefail
@@ -25,7 +26,7 @@ BUILD_HOME=$(getent passwd "$BUILD_USER" | cut -d: -f6)
 echo "=== 1. Updating Debian package index and installing APT packages ==="
 apt-get update
 
-# Install compilers, 3270 tools, XEDIT clone, build/debug utilities, and lspf deps
+# Install compilers, 3270 tools, build/debug utilities, archive tools, and library deps
 # Note: 'iconv' and 'dd' are pre-installed on Debian via 'libc-bin' and 'coreutils'
 apt-get install -y \
     build-essential \
@@ -34,7 +35,7 @@ apt-get install -y \
     gdb \
     gfortran \
     regina-rexx \
-    marst \
+    libregina3-dev \
     fp-compiler \
     gnucobol \
     c3270 \
@@ -42,8 +43,10 @@ apt-get install -y \
     xfonts-x3270-misc \
     s3270 \
     pr3287 \
-    the \
-    the-doc \
+    curl \
+    tar \
+    gzip \
+    unzip \
     netcat-openbsd \
     tmux \
     screen \
@@ -67,7 +70,69 @@ apt-get install -y \
     libboost-all-dev \
     libmagic-dev
 
-echo "=== 2. Building and installing lspf (ISPF Clone) into /usr/local ==="
+echo "=== 2. Building and installing GNU MARST (Algol 60) into /usr/local ==="
+MARST_URL="https://www.mirrorservice.org/sites/ftp.gnu.org/gnu/marst/marst-2.8.tar.gz"
+MARST_BUILD_DIR="$BUILD_HOME/marst-build"
+
+if ! command -v marst &>/dev/null; then
+    trap 'rm -rf "$MARST_BUILD_DIR"' EXIT
+
+    rm -rf "$MARST_BUILD_DIR"
+    echo "Downloading and extracting $MARST_URL into $MARST_BUILD_DIR as user '$BUILD_USER'..."
+    sudo -u "$BUILD_USER" mkdir -p "$MARST_BUILD_DIR"
+    sudo -u "$BUILD_USER" bash -c "
+        set -euo pipefail
+        cd '$MARST_BUILD_DIR'
+        curl -fsSL '$MARST_URL' -o marst-2.8.tar.gz
+        tar -xzf marst-2.8.tar.gz --strip-components=1
+        ./configure
+        make
+    "
+
+    echo "Installing GNU MARST into /usr/local..."
+    make -C "$MARST_BUILD_DIR" install
+    ldconfig
+
+    rm -rf "$MARST_BUILD_DIR"
+    trap - EXIT
+    echo "GNU MARST installed to $(command -v marst) and build directory removed."
+else
+    echo "marst is already installed at $(command -v marst) — skipping GNU MARST build."
+fi
+
+echo "=== 3. Building and installing THE (The Hessling Editor) into /usr/local ==="
+THE_URL="https://sourceforge.net/projects/hessling-editor/files/hessling-editor/4.0/thesrc40.zip/download"
+THE_BUILD_DIR="$BUILD_HOME/the-build"
+
+if ! command -v the &>/dev/null; then
+    trap 'rm -rf "$THE_BUILD_DIR"' EXIT
+
+    rm -rf "$THE_BUILD_DIR"
+    echo "Downloading and extracting $THE_URL into $THE_BUILD_DIR as user '$BUILD_USER'..."
+    sudo -u "$BUILD_USER" mkdir -p "$THE_BUILD_DIR"
+    sudo -u "$BUILD_USER" bash -c "
+        set -euo pipefail
+        cd '$THE_BUILD_DIR'
+        curl -fsSL '$THE_URL' -o thesrc40.zip
+        unzip -q thesrc40.zip
+        mkdir -p build
+        cd build
+        ../configure --with-rexx=regina --with-curses=ncurses
+        make
+    "
+
+    echo "Installing THE (The Hessling Editor) into /usr/local..."
+    make -C "$THE_BUILD_DIR/build" install
+    ldconfig
+
+    rm -rf "$THE_BUILD_DIR"
+    trap - EXIT
+    echo "THE installed to $(command -v the) and build directory removed."
+else
+    echo "the is already installed at $(command -v the) — skipping THE build."
+fi
+
+echo "=== 4. Building and installing lspf (ISPF Clone) into /usr/local ==="
 LSPF_REPO_URL="https://github.com/daniel64/lspf.git"
 LSPF_SHARE_DIR="/usr/local/share/lspf"
 LSPF_BIN="/usr/local/bin/lspf"
@@ -85,7 +150,7 @@ if [[ ! -x "$LSPF_BIN" || ! -d "$LSPF_SHARE_DIR" ]]; then
     sudo -u "$BUILD_USER" bash -c "
         set -euo pipefail
         cd '$LSPF_BUILD_DIR/src'
-        sed -i 's|#define ZSYSPATH .*|#define ZSYSPATH \"$LSPF_SHARE_DIR\"|g' lspf.h
+        sed -i 's|#define ZSYSPATH .*|#define ZSYSPATH "$LSPF_SHARE_DIR"|g' lspf.h
         ./compsetup
         ./setup
         ./comp1
@@ -117,7 +182,7 @@ else
     echo "lspf is already installed at $LSPF_BIN — skipping lspf build."
 fi
 
-echo "=== 3. Installing check80, pad80, and submitjcl into /usr/local/bin ==="
+echo "=== 5. Installing check80, pad80, and submitjcl into /usr/local/bin ==="
 
 # --- /usr/local/bin/check80 ---
 cat << 'EOF' > /usr/local/bin/check80
@@ -199,7 +264,7 @@ chmod 755 /usr/local/bin/submitjcl
 
 echo "Installed check80, pad80, and submitjcl to /usr/local/bin."
 
-echo "=== 4. Configuring aliases, EBCDIC helpers, .therc, and .vimrc for 'ibm' and 'ian' ==="
+echo "=== 6. Configuring aliases, EBCDIC helpers, .therc, and .vimrc for 'ibm' and 'ian' ==="
 
 # --- Bash Aliases & EBCDIC Helpers (~/.bashrc) ---
 BASH_ALIASES=$(cat << 'EOF'
@@ -333,13 +398,16 @@ for TARGET_USER in ibm ian; do
     # 4. Append Vim mainframe column markers if not already present
     touch "$VIMRC"
     if ! grep -q "Mainframe Fixed-Column Rulers" "$VIMRC"; then
-    echo "$VIM_MAINFRAME_CONFIG" >> "$VIMRC"
-    echo "[$TARGET_USER] Added mainframe column markers to $VIMRC"
+        echo "$VIM_MAINFRAME_CONFIG" >> "$VIMRC"
+        echo "[$TARGET_USER] Added mainframe column markers to $VIMRC"
     else
-    echo "[$TARGET_USER] Mainframe column markers already exist in $VIMRC — skipping."
+        echo "[$TARGET_USER] Mainframe column markers already exist in $VIMRC — skipping."
     fi
     chown "$TARGET_USER":"$USER_GROUP" "$VIMRC"
-    done
-    echo "=== Setup Complete! ==="
-    echo "Users 'ibm' and 'ian' should run 'source ~/.bashrc' (or 'source ~/.cshrc')"
-    echo "or start a new login session to activate the new aliases."
+done
+
+echo "=== Setup Complete! ==="
+echo "Users 'ibm' and 'ian' should run 'source ~/.bashrc' (or 'source ~/.cshrc')"
+echo "or start a new login session to activate the new aliases."
+
+
