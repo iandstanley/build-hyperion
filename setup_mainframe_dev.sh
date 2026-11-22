@@ -3,53 +3,10 @@
 # Script Name:   setup_mainframe_dev.sh
 # Description:   Installs Debian-native equivalents of classic IBM mainframe
 #                compilers, 3270 terminal emulators, XEDIT/ISPF clones, and
-#                workflow utilities for MVS 3.8J & VM/370CE development, and
-#                configures shell aliases, .therc, and .vimrc for 'ibm' & 'ian'.
-#
-# Installed Compilers & Mainframe Compatibility Notes:
-# ------------------------------------------------------------------------------
-# 1. gfortran (GNU Fortran) -> aliased as 'f77'
-#    - Mainframe Target: IBM FORTRAN IV (FORTRAN G / FORTRAN H / WATFIV)
-#    - Compatibility:    High with '-std=legacy -fno-automatic'. Enforces static
-#                        variable allocation (retaining values across calls
-#                        without SAVE) and supports 80-col fixed-form layout.
-#
-# 2. regina-rexx (Regina REXX Interpreter)
-#    - Mainframe Target: BREXX / BREXX-370 (VM/370CE & MVS 3.8J)
-#    - Compatibility:    Very High. Implements classic procedural REXX (TRL2 /
-#                        ANSI X3.274-1996) matching BREXX without OO extensions.
-#
-# 3. marst (GNU MARST Algol-to-C Translator) -> aliased as 'algol60'
-#    - Mainframe Target: OS Algol F / Algol W (MVS 3.8J & VM/370CE)
-#    - Compatibility:    High. Implements Revised Report on ALGOL 60. Translates
-#                        .alg to .c (compile output with: gcc file.c -lalgol -lm).
-#
-# 4. fp-compiler (Free Pascal Compiler) -> aliased as 'pascal'
-#    - Mainframe Target: Stanford Pascal / Pascal/VS (VM/370CE)
-#    - Compatibility:    High with '-Miso'. Enforces ISO 7185 / Wirth Pascal
-#                        rules and blocks modern Delphi/Turbo extensions.
-#
-# 5. gnucobol (GnuCOBOL Compiler) -> aliased as 'cobol'
-#    - Mainframe Target: MVT COBOL / IKFCBL00 (ANS COBOL 1968/1974 on MVS 3.8J)
-#    - Compatibility:    High with '-std=ibm -fixed'. Enforces 80-column card
-#                        margins (Cols 1-6 seq, Col 7 ind, 8-11 A, 12-72 B).
-#
-# Installed 3270, Editor & Workflow Tools:
-# ------------------------------------------------------------------------------
-# 6. ibm-3270 Suite (c3270, x3270, xfonts-x3270-misc, s3270, pr3287)
-#    - Terminal emulators (curses, X11, scriptable) with IND$FILE transfer
-#      support and 3287 network printer daemon for Hercules TN3270 ports.
-#
-# 7. the (The Hessling Editor) -> aliased as 'xedit'
-#    - VM/CMS XEDIT & KEDIT clone with REXX macro support and prefix commands.
-#      Configured via ~/.therc to boot into IBM XEDIT compatibility mode.
-#
-# 8. lspf (Linux ISPF Clone, built from GitHub) -> aliased as 'ispf'
-#    - Full MVS ISPF/PDF clone (Option 2 Edit, Option 3.4 DSLIST, split screen).
-#
-# 9. Utilities (netcat-openbsd, iconv [built-in], tmux, screen, vim)
-#    - Socket JCL submission (nc localhost 3505 < job.jcl), EBCDIC conversion
-#      (iconv -f UTF-8 -t IBM1047), session multiplexing, and ruler-guided Vim.
+#                workflow utilities for MVS 3.8J & VM/370CE development,
+#                installs check80/pad80/submitjcl into /usr/local/bin, and
+#                configures shell aliases, EBCDIC helpers, .therc, and .vimrc
+#                for 'ibm' & 'ian'.
 # ==============================================================================
 
 set -euo pipefail
@@ -61,12 +18,20 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# Determine the invoking user and their home directory (even when run via sudo)
+BUILD_USER="${SUDO_USER:-$USER}"
+BUILD_HOME=$(getent passwd "$BUILD_USER" | cut -d: -f6)
+
 echo "=== 1. Updating Debian package index and installing APT packages ==="
 apt-get update
 
-# Install compilers, 3270 tools, XEDIT clone, multiplexers, Vim, and lspf build deps
-# Note: 'iconv' is already pre-installed on Debian via 'libc-bin'
+# Install compilers, 3270 tools, XEDIT clone, build/debug utilities, and lspf deps
+# Note: 'iconv' and 'dd' are pre-installed on Debian via 'libc-bin' and 'coreutils'
 apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    gdb \
     gfortran \
     regina-rexx \
     marst \
@@ -86,33 +51,157 @@ apt-get install -y \
     git \
     g++ \
     make \
+    m4 \
+    xxd \
+    hexedit \
+    gawk \
+    dos2unix \
+    ripgrep \
+    fd-find \
+    mc \
+    rlwrap \
+    shellcheck \
+    python3 \
+    python3-venv \
     libncurses-dev \
     libboost-all-dev \
     libmagic-dev
 
-echo "=== 2. Building and installing lspf (ISPF Clone) from GitHub ==="
-if [[ ! -d /opt/lspf ]]; then
-    git clone https://github.com/daniel64/lspf.git  /opt/lspf
-    pushd /opt/lspf/src > /dev/null
-    # Point lspf's system path to /opt/lspf so all users share panels/messages
-    sed -i 's|#define ZSYSPATH .*|#define ZSYSPATH "/opt/lspf"|g' lspf.h
-    ./compsetup
-    ./setup
-    ./comp1
-    pushd /opt/lspf/src/Apps > /dev/null
-    ./compapps
-    popd > /dev/null
-    popd > /dev/null
-    # Symlink binary into /usr/local/bin so it is available system-wide
-    ln -sf /opt/lspf/src/lspf /usr/local/bin/lspf
-    echo "lspf built and installed to /usr/local/bin/lspf"
+echo "=== 2. Building and installing lspf (ISPF Clone) into /usr/local ==="
+LSPF_REPO_URL="https://github.com/daniel64/lspf.git"
+LSPF_SHARE_DIR="/usr/local/share/lspf"
+LSPF_BIN="/usr/local/bin/lspf"
+LSPF_BUILD_DIR="$BUILD_HOME/lspf-build"
+
+if [[ ! -x "$LSPF_BIN" || ! -d "$LSPF_SHARE_DIR" ]]; then
+    # Ensure temporary build directory is removed on exit or error
+    trap 'rm -rf "$LSPF_BUILD_DIR"' EXIT
+
+    rm -rf "$LSPF_BUILD_DIR"
+    echo "Cloning $LSPF_REPO_URL into $LSPF_BUILD_DIR as user '$BUILD_USER'..."
+    sudo -u "$BUILD_USER" git clone "$LSPF_REPO_URL" "$LSPF_BUILD_DIR"
+
+    # Configure ZSYSPATH to /usr/local/share/lspf and compile as non-root user
+    sudo -u "$BUILD_USER" bash -c "
+        set -euo pipefail
+        cd '$LSPF_BUILD_DIR/src'
+        sed -i 's|#define ZSYSPATH .*|#define ZSYSPATH \"$LSPF_SHARE_DIR\"|g' lspf.h
+        ./compsetup
+        ./setup
+        ./comp1
+        cd '$LSPF_BUILD_DIR/src/Apps'
+        ./compapps
+    "
+
+    echo "Installing lspf binary to $LSPF_BIN and runtime assets to $LSPF_SHARE_DIR..."
+    install -Dm755 "$LSPF_BUILD_DIR/src/lspf" "$LSPF_BIN"
+
+    mkdir -p "$LSPF_SHARE_DIR"
+    for ASSET_DIR in help mlib plib rexx slib tlib; do
+        if [[ -d "$LSPF_BUILD_DIR/$ASSET_DIR" ]]; then
+            cp -r "$LSPF_BUILD_DIR/$ASSET_DIR" "$LSPF_SHARE_DIR/"
+        fi
+    done
+
+    # Copy compiled shared libraries (Apps) into ZSYSPATH/Apps
+    if [[ -d "$LSPF_BUILD_DIR/src/Apps" ]]; then
+        mkdir -p "$LSPF_SHARE_DIR/Apps"
+        find "$LSPF_BUILD_DIR/src/Apps" -maxdepth 1 -name "*.so" -exec cp {} "$LSPF_SHARE_DIR/Apps/" \;
+    fi
+
+    # Clean up temporary build directory in user's home
+    rm -rf "$LSPF_BUILD_DIR"
+    trap - EXIT
+    echo "lspf installed to $LSPF_BIN (assets in $LSPF_SHARE_DIR) and build directory removed."
 else
-    echo "/opt/lspf already exists — skipping lspf build."
+    echo "lspf is already installed at $LSPF_BIN — skipping lspf build."
 fi
 
-echo "=== 3. Configuring aliases, .therc, and .vimrc for 'ibm' and 'ian' ==="
+echo "=== 3. Installing check80, pad80, and submitjcl into /usr/local/bin ==="
 
-# --- Bash Aliases (~/.bashrc) ---
+# --- /usr/local/bin/check80 ---
+cat << 'EOF' > /usr/local/bin/check80
+#!/usr/bin/env bash
+set -euo pipefail
+
+file="/dev/stdin"
+max_col=72
+
+for arg in "$@"; do
+    if [[ "$arg" =~ ^[0-9]+$ ]]; then
+        max_col="$arg"
+    else
+        file="$arg"
+    fi
+done
+
+tr -d '\r' < "$file" | awk -v max="$max_col" '
+    length($0) > max {
+        printf "Line %d exceeds column %d (length %d): %s\n", NR, max, length($0), $0 > "/dev/stderr"
+        bad++
+    }
+    END {
+        if (bad > 0) {
+            printf "check80 FAILED: %d line(s) exceed column %d.\n", bad, max > "/dev/stderr"
+            exit 1
+        }
+    }
+'
+EOF
+chmod 755 /usr/local/bin/check80
+
+# --- /usr/local/bin/pad80 ---
+cat << 'EOF' > /usr/local/bin/pad80
+#!/usr/bin/env bash
+set -euo pipefail
+
+add_seq=0
+file="/dev/stdin"
+
+for arg in "$@"; do
+    if [[ "$arg" == "--seq" ]]; then
+        add_seq=1
+    else
+        file="$arg"
+    fi
+done
+
+tr -d '\r' < "$file" | awk -v seq="$add_seq" '
+    {
+        if (seq == 1) {
+            printf "%-72.72s%08d\n", $0, NR * 100
+        } else {
+            printf "%-80.80s\n", $0
+        }
+    }
+'
+EOF
+chmod 755 /usr/local/bin/pad80
+
+# --- /usr/local/bin/submitjcl ---
+cat << 'EOF' > /usr/local/bin/submitjcl
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -z "${1:-}" ]]; then
+    echo "Usage: submitjcl <file.jcl> [host] [port]" >&2
+    exit 1
+fi
+
+if ! /usr/local/bin/check80 "$1" 72; then
+    echo "Submission aborted: fix lines exceeding column 72 first." >&2
+    exit 1
+fi
+
+tr -d '\r' < "$1" | nc -w 2 "${2:-127.0.0.1}" "${3:-3505}"
+EOF
+chmod 755 /usr/local/bin/submitjcl
+
+echo "Installed check80, pad80, and submitjcl to /usr/local/bin."
+
+echo "=== 4. Configuring aliases, EBCDIC helpers, .therc, and .vimrc for 'ibm' and 'ian' ==="
+
+# --- Bash Aliases & EBCDIC Helpers (~/.bashrc) ---
 BASH_ALIASES=$(cat << 'EOF'
 
 # --- Mainframe Development Aliases ---
@@ -122,6 +211,19 @@ alias cobol='cobc -std=ibm -fixed'
 alias f77='gfortran -std=legacy -fno-automatic'
 alias xedit='the'
 alias ispf='lspf'
+alias fd='fdfind'
+
+# --- EBCDIC & 80-Col Card Stream Helpers ---
+# Stream/file conversion using IBM-1047 (swap to IBM037 if preferred)
+ascii2ebcdic() { iconv -f UTF-8 -t IBM1047 "${@:--}"; }
+ebcdic2ascii() { iconv -f IBM1047 -t UTF-8 "${@:--}"; }
+
+# Convert newline-delimited ASCII text <-> fixed 80-byte unblocked EBCDIC card deck
+card2ebcdic()  { dd if="${1:-/dev/stdin}" of="${2:-/dev/stdout}" conv=ebcdic,block cbs=80 status=none; }
+ebcdic2card()  { dd if="${1:-/dev/stdin}" of="${2:-/dev/stdout}" conv=ascii,unblock cbs=80 status=none; }
+
+# Hex dump with EBCDIC-to-ASCII preview
+hexebcdic()    { dd if="${1:-/dev/stdin}" conv=ascii status=none | xxd; }
 EOF
 )
 
@@ -135,6 +237,13 @@ alias cobol 'cobc -std=ibm -fixed'
 alias f77 'gfortran -std=legacy -fno-automatic'
 alias xedit 'the'
 alias ispf 'lspf'
+alias fd 'fdfind'
+
+# --- EBCDIC & 80-Col Card Stream Helpers ---
+alias ascii2ebcdic 'iconv -f UTF-8 -t IBM1047'
+alias ebcdic2ascii 'iconv -f IBM1047 -t UTF-8'
+alias card2ebcdic  'dd conv=ebcdic,block cbs=80 status=none'
+alias ebcdic2card  'dd conv=ascii,unblock cbs=80 status=none'
 EOF
 )
 
@@ -155,10 +264,6 @@ EOF
 )
 
 # --- Vim Mainframe Column Rulers (~/.vimrc) ---
-# Sets visual column guides based on file extension:
-#   - COBOL (.cob, .cbl): Col 7 (indicator), Col 8 (Area A), Col 12 (Area B), Col 73 (Seq end)
-#   - FORTRAN (.f, .for, .f77): Col 6 (continuation), Col 7 (statement start), Col 73 (Seq end)
-#   - JCL (.jcl): Col 3 (// operand area), Col 16 (continuation area), Col 72 (continuation flag)
 VIM_MAINFRAME_CONFIG=$(cat << 'EOF'
 
 " --- Mainframe Fixed-Column Rulers & Settings ---
@@ -200,7 +305,7 @@ for TARGET_USER in ibm ian; do
     touch "$BASHRC"
     if ! grep -q "Mainframe Development Aliases" "$BASHRC"; then
         echo "$BASH_ALIASES" >> "$BASHRC"
-        echo "[$TARGET_USER] Added Bash aliases to $BASHRC"
+        echo "[$TARGET_USER] Added Bash aliases and EBCDIC helpers to $BASHRC"
     else
         echo "[$TARGET_USER] Bash aliases already exist in $BASHRC — skipping."
     fi
@@ -210,7 +315,7 @@ for TARGET_USER in ibm ian; do
     touch "$CSHRC"
     if ! grep -q "Mainframe Development Aliases" "$CSHRC"; then
         echo "$CSH_ALIASES" >> "$CSHRC"
-        echo "[$TARGET_USER] Added Csh aliases to $CSHRC"
+        echo "[$TARGET_USER] Added Csh aliases and EBCDIC helpers to $CSHRC"
     else
         echo "[$TARGET_USER] Csh aliases already exist in $CSHRC — skipping."
     fi
@@ -225,18 +330,4 @@ for TARGET_USER in ibm ian; do
         echo "[$TARGET_USER] $THERC already exists — preserving existing file."
     fi
 
-    # 4. Append Vim mainframe column markers if not already present
-    touch "$VIMRC"
-    if ! grep -q "Mainframe Fixed-Column Rulers" "$VIMRC"; then
-        echo "$VIM_MAINFRAME_CONFIG" >> "$VIMRC"
-        echo "[$TARGET_USER] Added mainframe column markers to $VIMRC"
-    else
-        echo "[$TARGET_USER] Mainframe column markers already exist in $VIMRC — skipping."
-    fi
-    chown "$TARGET_USER":"$USER_GROUP" "$VIMRC"
-done
-
-echo "=== Setup Complete! ==="
-echo "Users 'ibm' and 'ian' should run 'source ~/.bashrc' (or 'source ~/.cshrc')"
-echo "or start a new login session to activate the new aliases."
 
