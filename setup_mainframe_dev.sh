@@ -92,7 +92,7 @@ apt-get install -y \
 
 echo "=== 2. Building and installing lspf (ISPF Clone) from GitHub ==="
 if [[ ! -d /opt/lspf ]]; then
-    git clone https://github.com /opt/lspf
+    git clone https://github.com/daniel64/lspf.git  /opt/lspf
     pushd /opt/lspf/src > /dev/null
     # Point lspf's system path to /opt/lspf so all users share panels/messages
     sed -i 's|#define ZSYSPATH .*|#define ZSYSPATH "/opt/lspf"|g' lspf.h
