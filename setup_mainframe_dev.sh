@@ -330,4 +330,16 @@ for TARGET_USER in ibm ian; do
         echo "[$TARGET_USER] $THERC already exists — preserving existing file."
     fi
 
-
+    # 4. Append Vim mainframe column markers if not already present
+    touch "$VIMRC"
+    if ! grep -q "Mainframe Fixed-Column Rulers" "$VIMRC"; then
+    echo "$VIM_MAINFRAME_CONFIG" >> "$VIMRC"
+    echo "[$TARGET_USER] Added mainframe column markers to $VIMRC"
+    else
+    echo "[$TARGET_USER] Mainframe column markers already exist in $VIMRC — skipping."
+    fi
+    chown "$TARGET_USER":"$USER_GROUP" "$VIMRC"
+    done
+    echo "=== Setup Complete! ==="
+    echo "Users 'ibm' and 'ian' should run 'source ~/.bashrc' (or 'source ~/.cshrc')"
+    echo "or start a new login session to activate the new aliases."
