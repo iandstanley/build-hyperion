@@ -31,7 +31,8 @@ sudo apt-get -y install \
     libtool-bin libltdl-dev \
     libbz2-dev zlib1g-dev \
     libcap2-bin \
-    libregina3-dev
+    libregina3-dev \
+    ncurses-base ncurses-bin ncurses-doc ncurses-hexedit ncurses-term
 
 echo "=== Step 4: Verifying package and compiler versions (bldlvlck) ==="
 cd hyperion
